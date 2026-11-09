@@ -173,6 +173,9 @@ svg.chart .hit{cursor:pointer}
 .tabs button{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 0 9px;font-size:11px;color:var(--muted);font-weight:600}
 .tabs svg{width:23px;height:23px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
 .tabs button.on{color:var(--accent)}
+.dpick{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-top:8px}
+.dpick button{padding:10px 0;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--text);font:inherit;font-weight:700;font-size:14px}
+.dpick button.on{background:var(--accent);border-color:var(--accent);color:#fff}
 .hbtn.pend{background:var(--accent);color:#fff;border-color:var(--accent)}
 .tabs button{white-space:nowrap;overflow-wrap:normal;min-width:0} .brand b{white-space:nowrap}
 @media (max-width:370px){.chip .tl{font-size:8px;letter-spacing:-.02em} .tabs button{font-size:10px;letter-spacing:-.02em} .brand b{font-size:16px} .sync>span{display:none}}
@@ -583,6 +586,19 @@ const SCHEME = {
 const IVL = { 1: [[5,1,2],[6,1,2],[6,1.5,1.5],[8,1.5,1.5]], 3: [[6,1,1.5],[8,1,1],[10,1,1],[10,1.5,1]], 4: [[8,1,1],[10,1,1],[10,1.5,1],[10,2,1]], 5: [[10,1,1],[10,1.5,1],[12,1.5,1],[12,2,1]] };
 const STEPS = { 1: [5,5,6,6,7,7,7,8,8,8,9,9], 3: [8,8,9,9,10,10,10,10,11,11,12,12], 4: [10,10,10,11,11,11,11,12,12,12,12,12], 5: [10,10,11,11,12,12,12,12,12,12,12,12] };
 const LAYOUT = { lose: ["S","I","S","W","S","I+","R"], maintain: ["S","W","S","I","S","A","R"], gain: ["S","S","W","S","S","A","R"] };
+/* Свои дни тренировок: profile.tdays — номера дней (0 = пн … 6 = вс), от 2 до 6 дней. */
+const WDFULL = ["понедельник","вторник","среда","четверг","пятница","суббота","воскресенье"];
+const DEFDAYS = g => LAYOUT[g || "lose"].map((x, j) => /^(S|I)/.test(x) ? j : -1).filter(j => j >= 0);
+const TPAT = { lose: { 2: "SS", 3: "SIS", 4: "SISI", 5: "SISIS", 6: "SISISI" }, gain: { 2: "SS", 3: "SSS", 4: "SSSS", 5: "SSISS", 6: "SSISSI" } };
+TPAT.maintain = TPAT.lose;
+function tdays(goal){ const d = S.profile.tdays; return Array.isArray(d) && d.length >= 2 && d.length <= 6 ? d.slice().sort((a, b) => a - b) : DEFDAYS(goal || effective().goal); }
+function customLayout(goal, days){
+  const pat = TPAT[goal][days.length], L = Array(7).fill("W");
+  days.forEach((d, k) => { L[d] = pat[k]; });
+  const sat = L[5] === "I" ? 5 : L[6] === "I" ? 6 : -1; if (sat >= 0 && goal !== "gain") L[sat] = "I+";
+  const rest = L[6] === "W" ? 6 : L.lastIndexOf("W"); if (rest >= 0) L[rest] = "R";
+  return L;
+}
 const phaseOf = w => w <= 2 ? 0 : w <= 4 ? 1 : w <= 8 ? 2 : 3;
 const deload = w => w === 6 || w === 12;
 function genFocus(w, goal){
@@ -596,13 +612,14 @@ function genFocus(w, goal){
 }
 let PG = null, PGkey = "";
 function program(){
-  const e = effective(), key = JSON.stringify(e) + (S.profile.age || "");
+  const e = effective(), key = JSON.stringify(e) + (S.profile.age || "") + "|" + JSON.stringify(S.profile.tdays || null);
   if (PG && PGkey === key) return PG;
   const legacy = e.goal === "lose" && e.lu === 2 && e.ll === 2 && e.eq.bar && !e.eq.db && !e.eq.bands && !e.walkOnly;
   const cap = e.goal === "gain" ? 8 : e.goal === "maintain" ? 10 : 99;
   const steps = (e.level === 2 ? D.steps : STEPS[e.level]).map(x => Math.min(x, e.level === 1 ? Math.min(cap, 9) : cap));
   const ivs = Array.from({ length: 12 }, (_, k) => e.level === 2 ? D.int[k] : IVL[e.level][phaseOf(k+1)]);
-  const layout = LAYOUT[e.goal].map(x => e.walkOnly && (x === "I" || x === "I+") ? (x === "I+" ? "A" : "W") : x);
+  const base = Array.isArray(S.profile.tdays) && S.profile.tdays.length >= 2 ? customLayout(e.goal, tdays(e.goal)) : LAYOUT[e.goal];
+  const layout = base.map(x => e.walkOnly && (x === "I" || x === "I+") ? (x === "I+" ? "A" : "W") : x);
   let n = 0; const sIdx = layout.map(x => x === "S" ? n++ : -1);
   const dur = [30,45,50,55,60][e.level-1] + (e.goal === "gain" ? 10 : 0);
   const warm = e.level === 1 ? "5 минут: вращения в суставах по 10 раз, 10 приседаний на стул, 10 отжиманий от стены, минута ходьбы на месте."
@@ -646,7 +663,7 @@ const hhmm = m => Math.floor(m / 60) + ":" + pad(m % 60);
 function plan(i){
   const P = program(), e = P.e, w = weekOf(i), dow = i % 7, type = P.layout[dow], z = zones();
   if (type === "S") {
-    const L = e.goal === "gain" ? ["А","Б","А","Б"][P.sIdx[dow]] : (w % 2 ? ["А","Б","А"] : ["Б","А","Б"])[P.sIdx[dow]];
+    const L = (P.sIdx[dow] + (e.goal === "gain" || w % 2 ? 0 : 1)) % 2 ? "Б" : "А";
     const items = [{ k: "t0", name: "Разминка", task: P.warm }].concat(strengthItems(P, w, L), [{ k: "t7", name: "Заминка", task: D.cooldown }]);
     return { type: "strength", title: "Силовая " + L, time: "20:00–" + hhmm(20*60 + P.dur), dur: P.dur + " мин", pulse: z.strength,
       inten: e.level === 1 ? "средняя: тяжело, но не до предела" : "тяжело: последние 2–3 повтора даются с трудом", items };
@@ -1188,6 +1205,14 @@ function warnCard(list, compact){
     ${compact ? "</details>" : ""}
     <div class="tip" style="margin-top:8px">Приложение не заменяет врача. Если во время тренировки появились боль в груди, головокружение, сильная одышка или боль в суставе, остановитесь.</div></section>`;
 }
+function daysCard(){
+  const P = program(), cur = tdays(), names = { S: "силовая", I: "кардио", "I+": "кардио и прогулка", W: "ходьба", A: "активный отдых", R: "отдых" };
+  return `<section class="card"><h2 style="font-size:16px">Дни тренировок</h2>
+    <div class="tip" style="margin-top:4px">Отметьте удобные дни, от 2 до 6, и нажмите «Сохранить». План перестроится сам.</div>
+    ${daysPicker("set-days", cur)}
+    <div class="kv small" style="margin-top:8px">${P.layout.map((t, j) => `<b>${WDS[j]}</b><span>${names[t] || t}</span>`).join("")}</div>
+    <div class="pills" style="margin-top:10px"><button class="btn" data-savedays>Сохранить</button></div></section>`;
+}
 function profileCard(){
   const p = prof(), z = zones(), e = effective(), n = nutrition();
   return `<section class="card"><div class="rowh"><h2 style="font-size:16px">Ваш план</h2><button class="btn sec" style="padding:7px 12px;font-size:13px" data-setup="open">Изменить</button></div>
@@ -1239,7 +1264,10 @@ function vSetup(){
     ${Object.keys(EQ).map(k => `<label class="chk"><input type="checkbox" data-eq="${k}" ${p.eq[k] ? "checked" : ""}><span>${esc(EQ[k])}</span></label>`).join("")}
     <div style="margin-top:10px"><label class="hint" for="s-eqo" style="display:block;margin:0 0 6px">Другое</label><input id="s-eqo" class="field sm" maxlength="100" placeholder="Например: гиря 16 кг, велотренажёр, брусья" value="${esc(p.eqOther || "")}" autocomplete="off"></div>
     <div class="hint">Программа строится из турника, резинок, гантелей и веса тела. Другой инвентарь можно использовать вместо похожих упражнений по своему усмотрению.</div>
-    <div class="hint">Гантели лучше разборные: вес нужно будет прибавлять. Резинки удобнее набором из 3–5 штук разной жёсткости. Без гантелей пригодится рюкзак, в который можно положить бутылки с водой.</div></section>
+    <div class="hint">Гантели лучше разборные: вес нужно будет прибавлять. Резинки удобнее набором из 3–5 штук разной жёсткости. Без гантелей пригодится рюкзак, в который можно положить бутылки с водой.</div>
+    <h3 style="margin:16px 0 4px;font-size:15px">Дни тренировок</h3>
+    <div class="tip" style="margin-top:0">Отметьте дни, когда удобно заниматься, от 2 до 6. Силовые и кардио приложение расставит само.</div>
+    ${daysPicker("s-days", Array.isArray(p.tdays) && p.tdays.length >= 2 ? p.tdays : DEFDAYS(p.goal))}</section>
   <section class="card"><h2 class="stp">5. Здоровье</h2>
     <div class="tip" style="margin-top:0">Отметьте «здоров(а)» или то, что про вас. От ответов зависят калории и нагрузка.</div>
     <label class="chk" style="border-top:0"><input type="checkbox" data-h="ok" ${h.ok ? "checked" : ""}><span id="s-okl"><b>${p.sex === "f" ? "Я здорова" : "Я здоров"}:</b> болезней и ограничений нет</span></label>
@@ -1256,12 +1284,24 @@ function vSetup(){
   ${first ? setupExtra() : ""}
   <section class="card"><div class="tip">Только для взрослых 18+. Приложение подбирает план по общим формулам и готовым программам, его авторы не врачи. Рекомендации носят ознакомительный характер и не заменяют консультацию врача, тренера и диетолога. <button type="button" class="hlink" style="margin:0;padding:0" data-terms>Условия использования</button></div></section>`;
 }
+function daysPicker(id, days){
+  return `<div class="dpick" id="${id}">${WDS.map((l, j) => `<button type="button" class="${days.includes(j) ? "on" : ""}" data-tday="${j}">${l}</button>`).join("")}</div>
+    <div class="hint" id="${id}-n">${esc(daysNoteText(days))}</div>`;
+}
+function pickedDays(id){ return [...document.querySelectorAll("#" + id + " button.on")].map(b => +b.dataset.tday); }
+function daysNoteText(d){ const n = d.length;
+  if (n < 2) return "Выберите хотя бы 2 дня."; if (n > 6) return "Оставьте хотя бы 1 день отдыха: максимум 6 тренировок.";
+  const rest = d.includes(6) ? "Один свободный день — отдых." : "Воскресенье — отдых и готовка на неделю.";
+  return n + " " + plural(n, "тренировка", "тренировки", "тренировок") + " в неделю. " + (n < 6 ? "В остальные дни — ходьба. " : "") + rest; }
+function daysNote(id){ const el = document.getElementById(id + "-n"); if (!el) return; const d = pickedDays(id);
+  el.style.color = d.length < 2 || d.length > 6 ? "var(--fast)" : ""; el.textContent = daysNoteText(d); }
 function readSetup(){
   const g = id => document.getElementById(id), on = id => { const b = document.querySelector("#" + id + " button.on"); return b ? b.dataset.v : null; };
   const lu = document.querySelector("#s-lvu .lvl.on"), lw = document.querySelector("#s-lvl .lvl.on"), health = {};
   document.querySelectorAll("[data-h]").forEach(x => { if (x.checked) health[x.dataset.h] = true; });
   const sex = on("s-sex") || "m"; if (sex !== "f") { delete health.pregnant; delete health.bf; }
-  return { sex, job: on("s-job") || "sit", goal: on("s-goal") || "lose", pace: on("s-pace") || "mid", eq: (() => { const q = {}; document.querySelectorAll("[data-eq]").forEach(x => { if (x.checked) q[x.dataset.eq] = true; }); return q; })(), levelU: lu ? +lu.dataset.n : 2, levelL: lw ? +lw.dataset.n : 2,
+  const tdaysSel = pickedDays("s-days");
+  return { tdays: tdaysSel, sex, job: on("s-job") || "sit", goal: on("s-goal") || "lose", pace: on("s-pace") || "mid", eq: (() => { const q = {}; document.querySelectorAll("[data-eq]").forEach(x => { if (x.checked) q[x.dataset.eq] = true; }); return q; })(), levelU: lu ? +lu.dataset.n : 2, levelL: lw ? +lw.dataset.n : 2,
     age: parseNum(g("s-age").value), height: parseNum(g("s-h").value), startWeight: parseNum(g("s-w").value),
     testPush: parseNum(g("s-pu").value), testPull: parseNum(g("s-pl").value), testSquat: parseNum(g("s-sq").value), eqOther: (g("s-eqo").value || "").trim().slice(0, 100), health, ack: !!(g("s-ack") && g("s-ack").checked), d: parseKey(g("s-d").value) };
 }
@@ -1278,6 +1318,7 @@ function setupLive(){
   const r = readSetup(), dd = parseKey(v.value);
   if (dd) { const m = mondayOf(dd); el.textContent = "Программа идёт неделями с понедельника: неделя 1 начнётся в понедельник, " + m.getDate() + " " + MON[m.getMonth()] + "."; } else el.textContent = "";
   document.getElementById("s-goald").textContent = GOAL_DESC[r.goal] || "";
+  daysNote("s-days");
   document.getElementById("s-pacew").style.display = r.goal === "lose" ? "" : "none";
   document.getElementById("s-paced").textContent = PACE_DESC[r.pace] || "";
   document.getElementById("s-fem").style.display = r.sex === "f" ? "" : "none";
@@ -1302,9 +1343,10 @@ function saveSetup(){
   if (!(r.height >= 120 && r.height <= 230)) bad.push("рост от 120 до 230 см");
   if (!(r.startWeight >= 35 && r.startWeight <= 300)) bad.push("вес от 35 до 300 кг");
   if (!r.d) bad.push("дату старта");
+  if (r.tdays.length < 2 || r.tdays.length > 6) bad.push("от 2 до 6 дней тренировок в пункте 4");
   if (bad.length) { showErr(err, "Проверьте: " + bad.join(", ") + "."); return; }
   const np = { sex: r.sex, age: Math.round(r.age), height: Math.round(r.height), startWeight: Math.round(r.startWeight * 10) / 10, start: ymd(mondayOf(r.d)),
-    job: r.job, goal: r.goal, pace: r.pace, levelU: r.levelU, levelL: r.levelL, level: Math.round((r.levelU + r.levelL) / 2), eq: r.eq, eqOther: r.eqOther, healthOther: undefined, place: undefined, health: r.health, ack: r.ack, v: 2 };
+    job: r.job, goal: r.goal, pace: r.pace, levelU: r.levelU, levelL: r.levelL, level: Math.round((r.levelU + r.levelL) / 2), eq: r.eq, eqOther: r.eqOther, healthOther: undefined, place: undefined, health: r.health, ack: r.ack, v: 2, tdays: r.tdays };
   if (r.testPush != null && !Number.isNaN(r.testPush)) np.testPush = Math.round(r.testPush);
   if (r.testPull != null && !Number.isNaN(r.testPull)) np.testPull = Math.round(r.testPull);
   if (r.testSquat != null && !Number.isNaN(r.testSquat)) np.testSquat = Math.round(r.testSquat);
@@ -1652,6 +1694,7 @@ function vSettings(){
   return `<section class="card hero"><h1>Настройки</h1><div class="muted small">План, оформление, напоминания и данные — в одном месте.</div></section>
   ${IS_STANDALONE ? "" : installCard(false)}
   ${profileCard()}
+  ${daysCard()}
   <section class="card"><h2 style="font-size:16px">Оформление</h2>
     <div class="seg" style="margin-top:10px">${[["light","☀️ Светлое"],["dark","🌙 Тёмное"]].map(([k, l]) => `<button class="${th === k ? "on" : ""}" data-theme="${k}">${l}</button>`).join("")}</div></section>
   <section class="card"><h2 style="font-size:16px">Напоминания</h2>
@@ -1792,6 +1835,9 @@ document.addEventListener("click", e => {
   if (ds.chart) { try { localStorage.setItem("pp_chart", ds.chart); } catch (e) {} render(); return; }
   if (ds.wchart) { try { localStorage.setItem("pp_wchart", ds.wchart); } catch (e) {} render(); return; }
   if (ds.chartu) { try { localStorage.setItem("pp_chartu", ds.chartu); } catch (e) {} render(); return; }
+  if (ds.tday != null) { b.classList.toggle("on"); const box = b.closest(".dpick"); if (box) daysNote(box.id); return; }
+  if (ds.savedays != null) { const d = pickedDays("set-days"); if (d.length < 2 || d.length > 6) { daysNote("set-days"); toast("Нужно от 2 до 6 дней"); return; }
+    S.profile = Object.assign({}, S.profile, { tdays: d }); PG = null; queueSave("profile"); render(); toast("Дни тренировок сохранены"); return; }
   if (ds.tedit) { const [kind, k] = ds.tedit.split(":");
     if (kind === "r") { const x = regFood(S.sel).find(y => y.id === k); if (!x) return;
       showModal("Время: " + x.n, `<input type="time" id="te-v" class="field sm" value="${pad2(x.t || nowT())}">
