@@ -578,6 +578,16 @@ const TPL2 = { A: [["vpull",0],["squat",0],["push",0],["lunge",0],["core",0],["p
   Bbar: [["vpull",-1],["split",0],["press",0],["hinge",0],["row",0],["cond",0]],
   B: [["row",0],["split",0],["press",0],["hinge",0],["coreFloor",1],["cond",0]] };
 
+const TPL_U = [["vpull",0],["push",0],["press",0],["row",0],["core",0],["plank",0]];
+const TPL_L = [["squat",0],["hinge",0],["split",0],["lunge",0],["coreFloor",0],["plank",1]];
+/* Как повышать нагрузку: подсказка к каждому упражнению. */
+function progHint(name, e){
+  if (/гантел/i.test(name)) return "Сделали все повторы во всех подходах — в следующий раз возьмите на 1–2 кг тяжелее.";
+  if (/рюкзак/i.test(name)) return "Сделали все повторы — добавьте в рюкзак бутылку воды (+0,5–1,5 кг).";
+  if (/резин/i.test(name)) return "Сделали все повторы легко — возьмите резинку жёстче или встаньте дальше.";
+  if (/планк|лодочк/i.test(name)) return "Получилось всё время — в следующий раз +5–10 с.";
+  return "Сделали все повторы — в следующий раз добавьте 1–2 повтора в подходе.";
+}
 const SCHEME = {
   lose: { sets: [2,3,3,4], reps: ["10–12","12–15","10–12","12–15"], rest: "60 с" },
   maintain: { sets: [2,3,3,4], reps: ["8–10","10–12","8–10","10–12"], rest: "75 с" },
@@ -591,12 +601,16 @@ const WDFULL = ["понедельник","вторник","среда","четв
 const DEFDAYS = g => LAYOUT[g || "lose"].map((x, j) => /^(S|I)/.test(x) ? j : -1).filter(j => j >= 0);
 const TPAT = { lose: { 2: "SS", 3: "SIS", 4: "SISI", 5: "SISIS", 6: "SISISI" }, gain: { 2: "SS", 3: "SSS", 4: "SSSS", 5: "SSISS", 6: "SSISSI" } };
 TPAT.maintain = TPAT.lose;
+/* Раздельная схема: U — верх тела, L — низ тела, C — круговая на всё тело (силовая с кардио, без улицы). */
+const TPAT_ULC = { 2: "UL", 3: "ULC", 4: "ULUC", 5: "ULCUL", 6: "ULCULC" };
+const SPLITS = { full: "Всё тело + кардио", ulc: "Верх · Низ · Круговая" };
+const isSplit = () => S.profile.split === "ulc";
 function tdays(goal){ const d = S.profile.tdays; return Array.isArray(d) && d.length >= 2 && d.length <= 6 ? d.slice().sort((a, b) => a - b) : DEFDAYS(goal || effective().goal); }
-function customLayout(goal, days){
-  const pat = TPAT[goal][days.length], L = Array(7).fill("W");
+function customLayout(goal, days, split){
+  const ulc = split === "ulc", pat = ulc ? TPAT_ULC[days.length] : TPAT[goal][days.length], free = ulc ? "M" : "W", L = Array(7).fill(free);
   days.forEach((d, k) => { L[d] = pat[k]; });
-  const sat = L[5] === "I" ? 5 : L[6] === "I" ? 6 : -1; if (sat >= 0 && goal !== "gain") L[sat] = "I+";
-  const rest = L[6] === "W" ? 6 : L.lastIndexOf("W"); if (rest >= 0) L[rest] = "R";
+  if (!ulc) { const sat = L[5] === "I" ? 5 : L[6] === "I" ? 6 : -1; if (sat >= 0 && goal !== "gain") L[sat] = "I+"; }
+  const rest = L[6] === free ? 6 : L.lastIndexOf(free); if (rest >= 0) L[rest] = "R";
   return L;
 }
 const phaseOf = w => w <= 2 ? 0 : w <= 4 ? 1 : w <= 8 ? 2 : 3;
@@ -612,14 +626,14 @@ function genFocus(w, goal){
 }
 let PG = null, PGkey = "";
 function program(){
-  const e = effective(), key = JSON.stringify(e) + (S.profile.age || "") + "|" + JSON.stringify(S.profile.tdays || null);
+  const e = effective(), key = JSON.stringify(e) + (S.profile.age || "") + "|" + JSON.stringify(S.profile.tdays || null) + "|" + (S.profile.split || "");
   if (PG && PGkey === key) return PG;
   const legacy = e.goal === "lose" && e.lu === 2 && e.ll === 2 && e.eq.bar && !e.eq.db && !e.eq.bands && !e.walkOnly;
   const cap = e.goal === "gain" ? 8 : e.goal === "maintain" ? 10 : 99;
   const steps = (e.level === 2 ? D.steps : STEPS[e.level]).map(x => Math.min(x, e.level === 1 ? Math.min(cap, 9) : cap));
   const ivs = Array.from({ length: 12 }, (_, k) => e.level === 2 ? D.int[k] : IVL[e.level][phaseOf(k+1)]);
-  const base = Array.isArray(S.profile.tdays) && S.profile.tdays.length >= 2 ? customLayout(e.goal, tdays(e.goal)) : LAYOUT[e.goal];
-  const layout = base.map(x => e.walkOnly && (x === "I" || x === "I+") ? (x === "I+" ? "A" : "W") : x);
+  const base = (Array.isArray(S.profile.tdays) && S.profile.tdays.length >= 2) || isSplit() ? customLayout(e.goal, tdays(e.goal), S.profile.split) : LAYOUT[e.goal];
+  const layout = base.map(x => e.walkOnly && (x === "I" || x === "I+" || x === "C") ? (x === "I" ? "W" : "A") : x);
   let n = 0; const sIdx = layout.map(x => x === "S" ? n++ : -1);
   const dur = [30,45,50,55,60][e.level-1] + (e.goal === "gain" ? 10 : 0);
   const warm = e.level === 1 ? "5 минут: вращения в суставах по 10 раз, 10 приседаний на стул, 10 отжиманий от стены, минута ходьбы на месте."
@@ -630,10 +644,10 @@ function program(){
     focus: Array.from({ length: 12 }, (_, k) => legacy ? D.focus[k] : genFocus(k+1, e.goal)) };
   PGkey = key; return PG;
 }
-function exTask(kind, each, w, e, lvl){
+function exTask(kind, each, w, e, lvl, soft){
   lvl = lvl || e.level;
   const ph = phaseOf(w), sc = SCHEME[e.goal];
-  const sets = Math.max(2, sc.sets[ph] - (lvl === 1 ? 1 : 0) - (deload(w) ? 1 : 0));
+  const sets = Math.max(2, sc.sets[ph] - (lvl === 1 ? 1 : 0) - (deload(w) ? 1 : 0) - (soft ? 1 : 0));
   const side = each === "side" ? " на сторону" : each ? " на ногу" : "";
   if (kind === "time") return { task: `${sets}×${[20,25,30,40][ph] + (lvl-1)*10} с${side}`, rest: "45 с" };
   if (kind === "neg") return { task: `${sets}×3–5, опускание 4–5 с`, rest: "90 с" };
@@ -643,33 +657,76 @@ function exTask(kind, each, w, e, lvl){
     return { task: `${r} ${plural(r, "раунд", "раунда", "раундов")}: ${wr[0]} с работа, ${wr[1]} с отдых`, rest: "По схеме" }; }
   return { task: `${sets}×${sc.reps[ph]}${side}`, rest: sc.rest };
 }
-function strengthItems(P, w, L){
+function strengthItems(P, w, L, soft){
   const e = P.e;
-  if (P.legacy) return (L === "А" ? D.A : D.B).map((x, j) => ({ k: "t"+(j+1), ex: true,
+  if (P.legacy && !soft && (L === "А" || L === "Б")) return (L === "А" ? D.A : D.B).map((x, j) => ({ k: "t"+(j+1), ex: true,
     name: (w >= 9 && x.name === "Негативные подтягивания") ? "Подтягивания" : x.name,
     task: x.v[w-1], rest: x.rest, restSec: parseInt(x.rest, 10) || 0, tip: x.tip }));
-  const tpl = (L === "А" ? TPL2.A : e.eq.bar ? TPL2.Bbar : TPL2.B).map(x => e.goal === "gain" && x[0] === "cond" ? ["plank", 1] : x);
+  const tpl = (L === "U" ? TPL_U : L === "L" ? TPL_L : L === "А" ? TPL2.A : e.eq.bar ? TPL2.Bbar : TPL2.B).map(x => e.goal === "gain" && x[0] === "cond" ? ["plank", 1] : x);
   return tpl.map(([sl, off], j) => {
     const lad = slot(sl, e.eq), lvl = LOWER.test(lad) ? e.ll : /^(plank|cond|core)/.test(lad) ? e.level : e.lu;
-    const arr = LAD[lad]; let idx = Math.max(0, Math.min(arr.length - 1, (lvl - 1) + off + (w >= 5 ? 1 : 0) + (w >= 9 ? 1 : 0)));
+    const arr = LAD[lad]; let idx = Math.max(0, Math.min(arr.length - 1, (lvl - 1) + off + (w >= 5 ? 1 : 0) + (w >= 9 ? 1 : 0) - (soft ? 1 : 0)));
     while (idx > 0 && arr[idx].j && e.noJumps) idx--;
-    const st = arr[idx], tk = exTask(st.k, st.e, w, e, lvl);
-    return { k: "t"+(j+1), ex: true, name: st.n, task: tk.task, rest: tk.rest, restSec: parseInt(tk.rest, 10) || 0, tip: st.t };
+    const st = arr[idx], tk = exTask(st.k, st.e, w, e, lvl, soft);
+    return { k: "t"+(j+1), ex: true, name: st.n, task: tk.task, rest: tk.rest, restSec: parseInt(tk.rest, 10) || 0, tip: st.t, prog: progHint(st.n, e) };
   });
 }
 const hhmm = m => Math.floor(m / 60) + ":" + pad(m % 60);
+/* Круговая на всё тело: упражнения подряд без остановки, по времени. Без улицы и без настройки гантелей. */
+function circuitPlan(P, w, soft){
+  const e = P.e, ph = phaseOf(w), z = zones();
+  const r = Math.max(2, [2,3,3,4][ph] + (e.level >= 4 ? 1 : 0) - (deload(w) ? 1 : 0) - (soft ? 1 : 0));
+  const wr = e.level <= 2 ? [30, 30] : e.level === 3 ? [40, 20] : [45, 15];
+  const pick = (lad, lvl, cap) => { const arr = LAD[lad]; let idx = Math.max(0, Math.min(cap, (lvl - 1) + (w >= 5 ? 1 : 0) - (soft ? 1 : 0)));
+    while (idx > 0 && arr[idx].j && e.noJumps) idx--; return arr[idx]; };
+  const list = [pick("cond", e.level, 5), pick("squat", e.ll, 1), pick("push", e.lu, 3), pick("lunge", e.ll, 2),
+    LAD.cond[e.level <= 1 ? 1 : 2], pick("plank", e.level, 4), pick("hinge", e.ll, 2)];
+  const per = list.length * (wr[0] + wr[1]) / 60, total = Math.round(10 + r * per + (r - 1) * 1.5);
+  const items = [{ k: "t0", name: "Разминка, 5 минут", task: P.warm }].concat(list.map((st, j) => ({ k: "t" + (j + 1), ex: true, name: st.n,
+      task: `${wr[0]} с работа → ${wr[1]} с переход к следующему` + (st.e ? (st.e === "side" ? ", стороны чередуйте" : ", ноги чередуйте") : ""),
+      rest: "без остановки", restSec: 0, tip: st.t, prog: "Стало легко — делайте больше повторов за те же " + wr[0] + " с или добавьте круг." })),
+    [{ k: "t8", name: "Заминка", task: D.cooldown }]);
+  return { type: "circuit", title: "Круговая на всё тело", time: "20:00–" + hhmm(20*60 + total), dur: total + " мин", pulse: z.fast,
+    inten: "непрерывно: дыхание частое, но короткую фразу сказать можно",
+    note: `${r} ${plural(r, "круг", "круга", "кругов")}: все упражнения подряд без остановки, между кругами отдых 1–2 минуты. Таймер удобно поставить в режим «интервалы» на телефоне.`, items };
+}
+/* Восстановление: неделя после болезни — облегчённые тренировки. */
+function recovering(i){ for (let j = 1; j <= 7; j++) { if (i - j < 0) break; if (day(i - j).sick) return !day(i).sick; } return false; }
+function shorten(p){
+  const ex = p.items.filter(x => x.ex), keep = (ex.length ? ex.slice(0, 3) : p.items.slice(1, 2)).map(x => Object.assign({}, x, { task: x.task.replace(/^\d+×/, "2×").replace(/^\d+ (раунд\S*|круг\S*)/, "2 $1") }));
+  const items = [p.items[0]].concat(keep);
+  return Object.assign({}, p, { items, short: true, title: "Короткая: " + p.title.toLowerCase(), dur: "15–20 мин", time: /^20/.test(p.time) ? "20:00–20:20" : p.time,
+    note: p.type === "circuit" ? "2 круга из первых трёх упражнений, без остановки." : p.note });
+}
 
 /* ---------- plan ---------- */
 function plan(i){
+  const d = day(i);
+  if (d.sick) return { type: "rest", sick: true, title: "Пауза: восстановление", time: "", dur: "", items: [
+    { k: "t0", name: "Отдых, сон и вода", task: "Тренировок нет. Пейте тёплое, спите больше. Вернуться к нагрузке — когда пройдут температура и слабость." },
+    { k: "t1", name: "Если легче — немного движения", task: "Спокойная прогулка или растяжка 10 минут, без нагрузки." }] };
+  const p = planBase(i, recovering(i));
+  return d.light ? shorten(p) : p;
+}
+function planBase(i, soft){
   const P = program(), e = P.e, w = weekOf(i), dow = i % 7, type = P.layout[dow], z = zones();
+  if (type === "U" || type === "L") {
+    const items = [{ k: "t0", name: "Разминка", task: P.warm }].concat(strengthItems(P, w, type, soft), [{ k: "t7", name: "Заминка", task: D.cooldown }]);
+    return { type: "strength", soft, title: (type === "U" ? "Верх тела" : "Низ тела") + (soft ? " · лёгкая" : ""), time: "20:00–" + hhmm(20*60 + P.dur), dur: P.dur + " мин", pulse: z.strength,
+      inten: soft ? "лёгкая: после болезни оставляйте 3–4 повтора в запасе" : e.level === 1 ? "средняя: тяжело, но не до предела" : "тяжело: последние 2–3 повтора даются с трудом", items };
+  }
+  if (type === "C") { const c = circuitPlan(P, w, soft); if (soft) c.title += " · лёгкая"; c.soft = soft; return c; }
+  if (type === "M") return { type: "walk", title: "Лёгкий день", time: "В любое время", dur: "10–15 мин", pulse: z.walk, inten: "лёгкая",
+    items: [{ k: "t0", name: "Растяжка 10–15 минут", task: "Ноги, спина, плечи: по 30–40 с на каждое движение, плавно, без боли." },
+      { k: "t1", name: "Движение в течение дня", task: "Шаги по цели: дела, магазин, лестница вместо лифта — всё считается." }] };
   if (type === "S") {
     const L = (P.sIdx[dow] + (e.goal === "gain" || w % 2 ? 0 : 1)) % 2 ? "Б" : "А";
-    const items = [{ k: "t0", name: "Разминка", task: P.warm }].concat(strengthItems(P, w, L), [{ k: "t7", name: "Заминка", task: D.cooldown }]);
-    return { type: "strength", title: "Силовая " + L, time: "20:00–" + hhmm(20*60 + P.dur), dur: P.dur + " мин", pulse: z.strength,
+    const items = [{ k: "t0", name: "Разминка", task: P.warm }].concat(strengthItems(P, w, L, soft), [{ k: "t7", name: "Заминка", task: D.cooldown }]);
+    return { type: "strength", soft, title: "Силовая " + L + (soft ? " · лёгкая" : ""), time: "20:00–" + hhmm(20*60 + P.dur), dur: P.dur + " мин", pulse: z.strength,
       inten: e.level === 1 ? "средняя: тяжело, но не до предела" : "тяжело: последние 2–3 повтора даются с трудом", items };
   }
   if (type === "I" || type === "I+") {
-    const [r, f, s] = P.ivs[w-1], total = 10 + r * (f + s), sat = dow === 5;
+    const [r0, f, s] = P.ivs[w-1], r = Math.max(2, r0 - (soft ? 2 : 0)), total = 10 + r * (f + s), sat = dow === 5;
     const items = [
       { k: "t0", name: "Разминка, 5 минут", task: "Спокойная ходьба, круговые движения в суставах." },
       { k: "t1", name: `${r} ${plural(r, "круг", "круга", "кругов")}: ${num(f)} мин быстро + ${num(s)} мин спокойно`,
@@ -712,7 +769,7 @@ function meals(i){
     { k: "m8", time: "16:30", title: "Ужин · контейнер Б", dish: dw.dinner, kcal: dw.dinner.kcal, prot: dw.dinner.prot, carb: dw.dinner.carb },
     { k: "m9", time: "18:30", water: true, title: "Вода", sub: ml(300) + " мл", ml: ml(300) },
     { k: "m10", time: "19:30–20:00", title: "Вечерний приём", kcal: M.ck, prot: M.cp, carb: M.cc, lines: [["Творог 5%", M.curd + " г"], ["Яблоко или ягоды", "150 г"]] }]);
-  if (p.type === "strength" || p.type === "interval")
+  if (p.type === "strength" || p.type === "interval" || p.type === "circuit")
     L.push({ k: "m11", time: /^20/.test(p.time) ? "20:00" : "На тренировке", water: true, title: "Вода на тренировке", sub: "450 мл небольшими глотками", ml: 450 });
   return applyTimes(i, L.concat(M.extras.filter(x => x.k === "x2")));
 }
@@ -1004,6 +1061,23 @@ function vFood(){
   <section class="card"><details><summary>Правила питания</summary><div class="kv" style="margin-top:10px">${goalRules().map(r => `<b>${esc(r[0])}</b><span>${esc(r[1])}</span>`).join("")}</div></details></section>`;
 }
 
+const SKIPR = { busy: "Мало времени или сил", sick: "Заболел(а)", skip: "Пропускаю по другой причине" };
+function skipBlock(i, p){
+  const d = day(i);
+  if (d.sick) return `<div class="tip">Отмечено: болезнь. После паузы неделя тренировок будет облегчённой.</div>
+    <div class="pills" style="margin-top:8px;gap:8px"><button class="btn sec" data-unsick="${i}">Я уже здоров(а)</button></div>`;
+  if (d.light) return `<div class="tip">Короткая версия на сегодня: разминка и 3 упражнения по 2 подхода. Лучше немного, чем ничего — прогресс не теряется.</div>
+    <div class="pills" style="margin-top:8px"><button class="btn sec" data-unlight="${i}">Вернуть полную тренировку</button></div>`;
+  if (d.skip) return `<div class="tip">Пропущено: ${esc(d.skip)}.</div><div class="pills" style="margin-top:8px"><button class="btn sec" data-unskip="${i}">Отменить пропуск</button></div>`;
+  if (p.type === "rest") return "";
+  return `<div class="pills" style="margin-top:10px"><button class="hlink" data-skipmenu="${i}">Не получается сегодня?</button></div>`;
+}
+function skipModal(i){
+  showModal("Что случилось?", `<div class="list" style="margin-top:4px">
+    <button class="btn sec" style="display:block;width:100%;margin-top:8px;text-align:left;line-height:1.35" data-skipr="busy:${i}">⏱ Мало времени или сил<br><small class="muted">Короткая версия на 15–20 минут, чтобы не терять прогресс</small></button>
+    <button class="btn sec" style="display:block;width:100%;margin-top:8px;text-align:left;line-height:1.35" data-skipr="sick:${i}">🤒 Заболел(а)<br><small class="muted">Пауза, а потом неделя лёгких тренировок</small></button>
+    <button class="btn sec" style="display:block;width:100%;margin-top:8px;text-align:left;line-height:1.35" data-skipr="skip:${i}">✕ Пропускаю<br><small class="muted">Дела, поездка — просто отметить пропуск</small></button></div>`, true);
+}
 function vTrain(){
   const i = S.sel, d = day(i), t = d.train || {}, f = d.fact || {}, p = plan(i), td = trainDone(i), w = weekOf(i);
   const items = p.items.map(x => {
@@ -1011,6 +1085,7 @@ function vTrain(){
     return `<div class="item ${on ? "on" : ""}"><button class="ck ${on ? "on" : ""}" data-check="${x.k}" aria-label="Отметить">${CHECK}</button><div>
       <div class="t">${esc(x.name)}</div><div class="task">${esc(x.task)}</div>
       ${x.ex ? `${x.restSec ? `<button class="restbtn" data-rest="${x.restSec}">Отдых ${esc(x.rest)} ▶</button>` : `<span class="pill" style="margin-top:8px">${esc(x.rest)}</span>`}
+        ${x.prog ? `<div class="hint" style="margin:6px 0 0">↑ ${esc(x.prog)}</div>` : ""}
         <details><summary>Техника</summary><div class="tip">${esc(x.tip)}</div></details>
         <input class="field sm" style="margin-top:8px" placeholder="Факт: повторы, вес, заметки" data-f="fact" data-k="${x.k}" data-i="${i}" value="${esc(f[x.k] || "")}" maxlength="300">` : ""}
     </div></div>`;
@@ -1025,9 +1100,12 @@ function vTrain(){
     <div class="rowh" style="margin-top:4px"><h2 style="font-size:21px">${esc(p.title)}</h2><span class="pill ${td.full ? "g" : ""}">${td.n} из ${td.of}</span></div>
     <div class="pills">${p.time ? `<span class="pill">${esc(p.time)}</span>` : ""}${p.dur ? `<span class="pill">${esc(p.dur)}</span>` : ""}
       ${p.pulse ? `<span class="pill r">пульс ${p.pulse}</span>` : ""}${p.inten ? `<span class="pill o">Нагрузка: ${esc(p.inten)}</span>` : ""}</div>
-    ${p.type === "strength" ? `<div class="tip">${esc(program().focus[w-1])}</div>` : ""}
+    ${p.note ? `<div class="tip">${esc(p.note)}</div>` : ""}
+    ${p.type === "strength" && !p.short ? `<div class="tip">${esc(program().focus[w-1])}</div>` : ""}
+    ${p.soft && !p.short ? `<div class="tip"><b>Восстановительная неделя после болезни:</b> подходов меньше, упражнения на ступень проще. Через неделю нагрузка вернётся сама.</div>` : ""}
+    ${skipBlock(i, p)}
     ${p.type === "interval" ? `<div class="tip">Где: ${esc(p.mode)}.${program().e.noRun ? " Бег и прыжки вам пока не нужны: лишняя нагрузка на суставы." : ""}</div><div id="itimer"></div>` : ""}
-    ${p.type === "rest" ? `<div class="tip">Силовых нет. Шаги всё равно по цели.</div>` : ""}
+    ${p.type === "rest" && !p.sick ? `<div class="tip">Силовых нет. Шаги всё равно по цели.</div>` : ""}
   </section>
   <section class="card"><div class="list">${items}</div></section>
   <div class="sec-title">Неделя ${w}</div>
@@ -1206,9 +1284,11 @@ function warnCard(list, compact){
     <div class="tip" style="margin-top:8px">Приложение не заменяет врача. Если во время тренировки появились боль в груди, головокружение, сильная одышка или боль в суставе, остановитесь.</div></section>`;
 }
 function daysCard(){
-  const P = program(), cur = tdays(), names = { S: "силовая", I: "кардио", "I+": "кардио и прогулка", W: "ходьба", A: "активный отдых", R: "отдых" };
+  const P = program(), cur = tdays(), names = { S: "силовая", I: "кардио", "I+": "кардио и прогулка", W: "ходьба", A: "активный отдых", R: "отдых", U: "верх тела", L: "низ тела", C: "круговая на всё тело", M: "растяжка" };
   return `<section class="card"><h2 style="font-size:16px">Дни тренировок</h2>
     <div class="tip" style="margin-top:4px">Отметьте удобные дни, от 2 до 6, и нажмите «Сохранить». План перестроится сам.</div>
+    <div style="margin-top:10px">${seg("set-split", SPLITS, isSplit() ? "ulc" : "full")}</div>
+    <div class="hint" style="margin-top:6px">«Верх · Низ · Круговая»: день на верх тела, день на ноги и ягодицы и круговая на всё тело без остановок вместо кардио на улице. В свободные дни — растяжка вместо ходьбы.</div>
     ${daysPicker("set-days", cur)}
     <div class="kv small" style="margin-top:8px">${P.layout.map((t, j) => `<b>${WDS[j]}</b><span>${names[t] || t}</span>`).join("")}</div>
     <div class="pills" style="margin-top:10px"><button class="btn" data-savedays>Сохранить</button></div></section>`;
@@ -1266,7 +1346,8 @@ function vSetup(){
     <div class="hint">Программа строится из турника, резинок, гантелей и веса тела. Другой инвентарь можно использовать вместо похожих упражнений по своему усмотрению.</div>
     <div class="hint">Гантели лучше разборные: вес нужно будет прибавлять. Резинки удобнее набором из 3–5 штук разной жёсткости. Без гантелей пригодится рюкзак, в который можно положить бутылки с водой.</div>
     <h3 style="margin:16px 0 4px;font-size:15px">Дни тренировок</h3>
-    <div class="tip" style="margin-top:0">Отметьте дни, когда удобно заниматься, от 2 до 6. Силовые и кардио приложение расставит само.</div>
+    <div class="tip" style="margin-top:0">Отметьте дни, когда удобно заниматься, от 2 до 6. Тренировки приложение расставит само.</div>
+    <div style="margin-top:8px">${seg("s-split", SPLITS, p.split === "ulc" ? "ulc" : "full")}</div>
     ${daysPicker("s-days", Array.isArray(p.tdays) && p.tdays.length >= 2 ? p.tdays : DEFDAYS(p.goal))}</section>
   <section class="card"><h2 class="stp">5. Здоровье</h2>
     <div class="tip" style="margin-top:0">Отметьте «здоров(а)» или то, что про вас. От ответов зависят калории и нагрузка.</div>
@@ -1300,8 +1381,8 @@ function readSetup(){
   const lu = document.querySelector("#s-lvu .lvl.on"), lw = document.querySelector("#s-lvl .lvl.on"), health = {};
   document.querySelectorAll("[data-h]").forEach(x => { if (x.checked) health[x.dataset.h] = true; });
   const sex = on("s-sex") || "m"; if (sex !== "f") { delete health.pregnant; delete health.bf; }
-  const tdaysSel = pickedDays("s-days");
-  return { tdays: tdaysSel, sex, job: on("s-job") || "sit", goal: on("s-goal") || "lose", pace: on("s-pace") || "mid", eq: (() => { const q = {}; document.querySelectorAll("[data-eq]").forEach(x => { if (x.checked) q[x.dataset.eq] = true; }); return q; })(), levelU: lu ? +lu.dataset.n : 2, levelL: lw ? +lw.dataset.n : 2,
+  const tdaysSel = pickedDays("s-days"), spb = document.querySelector("#s-split button.on");
+  return { tdays: tdaysSel, split: spb ? spb.dataset.v : "full", sex, job: on("s-job") || "sit", goal: on("s-goal") || "lose", pace: on("s-pace") || "mid", eq: (() => { const q = {}; document.querySelectorAll("[data-eq]").forEach(x => { if (x.checked) q[x.dataset.eq] = true; }); return q; })(), levelU: lu ? +lu.dataset.n : 2, levelL: lw ? +lw.dataset.n : 2,
     age: parseNum(g("s-age").value), height: parseNum(g("s-h").value), startWeight: parseNum(g("s-w").value),
     testPush: parseNum(g("s-pu").value), testPull: parseNum(g("s-pl").value), testSquat: parseNum(g("s-sq").value), eqOther: (g("s-eqo").value || "").trim().slice(0, 100), health, ack: !!(g("s-ack") && g("s-ack").checked), d: parseKey(g("s-d").value) };
 }
@@ -1346,7 +1427,7 @@ function saveSetup(){
   if (r.tdays.length < 2 || r.tdays.length > 6) bad.push("от 2 до 6 дней тренировок в пункте 4");
   if (bad.length) { showErr(err, "Проверьте: " + bad.join(", ") + "."); return; }
   const np = { sex: r.sex, age: Math.round(r.age), height: Math.round(r.height), startWeight: Math.round(r.startWeight * 10) / 10, start: ymd(mondayOf(r.d)),
-    job: r.job, goal: r.goal, pace: r.pace, levelU: r.levelU, levelL: r.levelL, level: Math.round((r.levelU + r.levelL) / 2), eq: r.eq, eqOther: r.eqOther, healthOther: undefined, place: undefined, health: r.health, ack: r.ack, v: 2, tdays: r.tdays };
+    job: r.job, goal: r.goal, pace: r.pace, levelU: r.levelU, levelL: r.levelL, level: Math.round((r.levelU + r.levelL) / 2), eq: r.eq, eqOther: r.eqOther, healthOther: undefined, place: undefined, health: r.health, ack: r.ack, v: 2, tdays: r.tdays, split: r.split };
   if (r.testPush != null && !Number.isNaN(r.testPush)) np.testPush = Math.round(r.testPush);
   if (r.testPull != null && !Number.isNaN(r.testPull)) np.testPull = Math.round(r.testPull);
   if (r.testSquat != null && !Number.isNaN(r.testSquat)) np.testSquat = Math.round(r.testSquat);
@@ -1503,7 +1584,7 @@ function buildIcs(opt){
   });
   if (opt.train) {
     const BY = ["MO","TU","WE","TH","FR","SA","SU"], days = [];
-    for (let j = 0; j < 7; j++) { const pl = plan(j); if (pl.type === "strength" || pl.type === "interval") days.push(BY[j] + (/^20/.test(pl.time) ? "" : "@day")); }
+    for (let j = 0; j < 7; j++) { const pl = plan(j); if (pl.type === "strength" || pl.type === "interval" || pl.type === "circuit") days.push(BY[j] + (/^20/.test(pl.time) ? "" : "@day")); }
     const eve = days.filter(d => !d.endsWith("@day")), noon = days.filter(d => d.endsWith("@day")).map(d => d.replace("@day", ""));
     if (eve.length) ev(20, 0, "🏋 Тренировка", "Задание на сегодня — во вкладке «Тренировки». Вода 450 мл небольшими глотками.", "RRULE:FREQ=WEEKLY;BYDAY=" + eve.join(",") + ";UNTIL=" + until);
     if (noon.length) ev(12, 0, "🏋 Тренировка", "Сегодня тренировка днём. Задание — во вкладке «Тренировки».", "RRULE:FREQ=WEEKLY;BYDAY=" + noon.join(",") + ";UNTIL=" + until);
@@ -1572,6 +1653,7 @@ function burned(i){
   const pl = plan(i), td = trainDone(i), frac = td.of ? td.n / td.of : 0;
   let train = 0;
   if (pl.type === "strength") train = 4 * w * (parseInt(pl.dur, 10) || 45) / 60 * frac;
+  if (pl.type === "circuit") train = 5.5 * w * (parseInt(pl.dur, 10) || 30) / 60 * frac;
   if (pl.type === "interval") train = 1.5 * w * (pl.iv ? pl.iv.total : 30) / 60 * frac; // only the extra over walking: the steps themselves are already counted
   const act = (d.act || []).reduce((s, a) => s + (a.kcal || 0), 0);
   // Обмен и быт набегают равномерно в течение суток: для сегодняшнего дня — по текущему времени на телефоне.
@@ -1837,7 +1919,23 @@ document.addEventListener("click", e => {
   if (ds.chartu) { try { localStorage.setItem("pp_chartu", ds.chartu); } catch (e) {} render(); return; }
   if (ds.tday != null) { b.classList.toggle("on"); const box = b.closest(".dpick"); if (box) daysNote(box.id); return; }
   if (ds.savedays != null) { const d = pickedDays("set-days"); if (d.length < 2 || d.length > 6) { daysNote("set-days"); toast("Нужно от 2 до 6 дней"); return; }
-    S.profile = Object.assign({}, S.profile, { tdays: d }); PG = null; queueSave("profile"); render(); toast("Дни тренировок сохранены"); return; }
+    const sb = document.querySelector("#set-split button.on"), split = sb ? sb.dataset.v : "full";
+    S.profile = Object.assign({}, S.profile, { tdays: d, split }); PG = null; queueSave("profile"); render(); toast("План тренировок сохранён"); return; }
+  if (ds.skipmenu != null) { skipModal(+ds.skipmenu); return; }
+  if (ds.skipr) { const [r, si] = ds.skipr.split(":"), i = +si;
+    if (r === "busy") { mutDay(i, d => { d.light = true; delete d.skip; }); closeModal(); render(); toast("Короткая версия на сегодня"); return; }
+    if (r === "skip") { closeModal(); showModal("Пропуск", `<input id="sk-why" class="field sm" maxlength="80" placeholder="Причина (необязательно)">
+      <div class="pills" style="margin-top:12px"><button class="btn" data-skipsave="${i}">Отметить пропуск</button></div>`, true); return; }
+    if (r === "sick") { closeModal(); showModal("Пауза по болезни", `<div class="tip" style="margin-top:0">На сколько дней поставить паузу? Если выздоровеете раньше, её можно снять.</div>
+      <div class="pills" style="margin-top:10px;gap:8px">${[1,3,5,7].map(n => `<button class="btn sec" data-sickn="${i}:${n}">${n} ${plural(n, "день", "дня", "дней")}</button>`).join("")}</div>`, true); return; } }
+  if (ds.skipsave != null) { const i = +ds.skipsave, why = ((document.getElementById("sk-why") || {}).value || "").trim().slice(0, 80) || "без причины";
+    mutDay(i, d => { d.skip = why; delete d.light; }); closeModal(); render(); return; }
+  if (ds.sickn) { const [si, sn] = ds.sickn.split(":").map(Number);
+    for (let k = si; k < Math.min(DAYS, si + sn); k++) mutDay(k, d => { d.sick = true; delete d.light; delete d.skip; });
+    closeModal(); render(); toast("Пауза на " + sn + " " + plural(sn, "день", "дня", "дней") + ". Выздоравливайте!"); return; }
+  if (ds.unsick != null) { const i0 = +ds.unsick; for (let k = i0; k < DAYS; k++) if (day(k).sick) mutDay(k, d => { delete d.sick; }); render(); toast("С возвращением! Неделя будет облегчённой."); return; }
+  if (ds.unlight != null) { mutDay(+ds.unlight, d => { delete d.light; }); render(); return; }
+  if (ds.unskip != null) { mutDay(+ds.unskip, d => { delete d.skip; }); render(); return; }
   if (ds.tedit) { const [kind, k] = ds.tedit.split(":");
     if (kind === "r") { const x = regFood(S.sel).find(y => y.id === k); if (!x) return;
       showModal("Время: " + x.n, `<input type="time" id="te-v" class="field sm" value="${pad2(x.t || nowT())}">
