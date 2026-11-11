@@ -688,7 +688,7 @@ function circuitPlan(P, w, soft){
     [{ k: "t8", name: "Заминка", task: D.cooldown }]);
   return { type: "circuit", title: "Круговая на всё тело", time: "20:00–" + hhmm(20*60 + total), dur: total + " мин", pulse: z.fast,
     inten: "непрерывно: дыхание частое, но короткую фразу сказать можно",
-    note: `${r} ${plural(r, "круг", "круга", "кругов")}: все упражнения подряд без остановки, между кругами отдых 1–2 минуты. Таймер удобно поставить в режим «интервалы» на телефоне.`, items };
+    note: `${r} ${plural(r, "круг", "круга", "кругов")}: все упражнения подряд без остановки, между кругами отдых 1–2 минуты. Таймер ниже сам скажет, когда начинать и когда переходить.`, items, rounds: r, wr };
 }
 /* Восстановление: неделя после болезни — облегчённые тренировки. */
 function recovering(i){ for (let j = 1; j <= 7; j++) { if (i - j < 0) break; if (day(i - j).sick) return !day(i).sick; } return false; }
@@ -696,7 +696,7 @@ function shorten(p){
   const ex = p.items.filter(x => x.ex), keep = (ex.length ? ex.slice(0, 3) : p.items.slice(1, 2)).map(x => Object.assign({}, x, { task: x.task.replace(/^\d+×/, "2×").replace(/^\d+ (раунд\S*|круг\S*)/, "2 $1") }));
   const items = [p.items[0]].concat(keep);
   return Object.assign({}, p, { items, short: true, title: "Короткая: " + p.title.toLowerCase(), dur: "15–20 мин", time: /^20/.test(p.time) ? "20:00–20:20" : p.time,
-    note: p.type === "circuit" ? "2 круга из первых трёх упражнений, без остановки." : p.note });
+    rounds: p.type === "circuit" ? 2 : p.rounds, note: p.type === "circuit" ? "2 круга из первых трёх упражнений, без остановки." : p.note });
 }
 
 /* ---------- plan ---------- */
@@ -1100,7 +1100,7 @@ function vTrain(){
     <div class="rowh" style="margin-top:4px"><h2 style="font-size:21px">${esc(p.title)}</h2><span class="pill ${td.full ? "g" : ""}">${td.n} из ${td.of}</span></div>
     <div class="pills">${p.time ? `<span class="pill">${esc(p.time)}</span>` : ""}${p.dur ? `<span class="pill">${esc(p.dur)}</span>` : ""}
       ${p.pulse ? `<span class="pill r">пульс ${p.pulse}</span>` : ""}${p.inten ? `<span class="pill o">Нагрузка: ${esc(p.inten)}</span>` : ""}</div>
-    ${p.note ? `<div class="tip">${esc(p.note)}</div>` : ""}
+    ${p.note ? `<div class="tip">${esc(p.note)}</div>` : ""}${p.type === "circuit" ? `<div id="itimer"></div>` : ""}
     ${p.type === "strength" && !p.short ? `<div class="tip">${esc(program().focus[w-1])}</div>` : ""}
     ${p.soft && !p.short ? `<div class="tip"><b>Восстановительная неделя после болезни:</b> подходов меньше, упражнения на ступень проще. Через неделю нагрузка вернётся сама.</div>` : ""}
     ${skipBlock(i, p)}
@@ -1813,7 +1813,7 @@ function render(){
   const gear = document.querySelector(".gear"); if (gear) gear.classList.toggle("on", S.tab === "settings");
   main.innerHTML = v;
   afterRender();
-  if (S.tab === "train" && plan(S.sel).type === "interval") drawITimer();
+  if (S.tab === "train" && /interval|circuit/.test(plan(S.sel).type)) drawITimer();
 }
 function safeRender(){ if (isEditing()) S.needRender = true; else render(); }
 document.addEventListener("focusout", () => setTimeout(() => { if (S.needRender && !isEditing()) render(); }, 60));
@@ -1827,6 +1827,9 @@ function beep(n){
       g.gain.exponentialRampToValueAtTime(0.0001, t0+0.22); o.start(t0); o.stop(t0+0.25); } } catch (e) {}
   try { navigator.vibrate && navigator.vibrate(n > 1 ? [200, 100, 200] : 250); } catch (e) {}
 }
+function tick(){ try { ac = ac || new (window.AudioContext || window.webkitAudioContext)(); const o = ac.createOscillator(), g = ac.createGain(), t0 = ac.currentTime;
+  o.frequency.value = 520; o.connect(g); g.connect(ac.destination); g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.18, t0 + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.09); o.start(t0); o.stop(t0 + 0.1); } catch (e) {} }
 const mmss = s => { s = Math.max(0, Math.ceil(s)); return Math.floor(s/60) + ":" + pad(s % 60); };
 let REST = null; // {end, total}
 function startRest(sec){ try { ac = ac || new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} REST = { end: Date.now() + sec*1000, total: sec }; drawRest(); }
@@ -1842,10 +1845,21 @@ function buildPhases(iv){
   for (let r = 1; r <= iv.r; r++) { ph.push({ n: "Быстро · круг " + r + " из " + iv.r, s: iv.f*60, c: "fast" }); ph.push({ n: "Спокойно · круг " + r + " из " + iv.r, s: iv.s*60, c: "calm" }); }
   ph.push({ n: "Заминка", s: 300, c: "" }); return ph;
 }
+/* Таймер круговой: работа → переход → … → отдых между кругами. */
+function buildCircuit(p){
+  const ex = p.items.filter(x => x.ex), [work, tr] = p.wr, ph = [{ n: "Разминка", s: 300, c: "" }];
+  for (let r = 1; r <= p.rounds; r++) ex.forEach((x, j) => {
+    ph.push({ n: x.name + " · круг " + r + " из " + p.rounds, s: work, c: "fast" });
+    const last = j === ex.length - 1;
+    if (!last) ph.push({ n: "Переход: " + ex[j + 1].name, s: tr, c: "calm" });
+    else if (r < p.rounds) ph.push({ n: "Отдых между кругами", s: 90, c: "calm" });
+  });
+  ph.push({ n: "Заминка", s: 300, c: "" }); return ph;
+}
 function itState(){
-  const p = plan(S.sel); if (!p.iv) return null;
-  const key = keyAt(S.sel);
-  if (!IT || IT.key !== key) IT = { key, phases: buildPhases(p.iv), idx: 0, left: 300, end: 0, running: false, done: false };
+  const p = plan(S.sel); if (!p.iv && p.type !== "circuit") return null;
+  const key = keyAt(S.sel) + (p.short ? ":s" : "") + (p.soft ? ":r" : "");
+  if (!IT || IT.key !== key) IT = { key, phases: p.type === "circuit" ? buildCircuit(p) : buildPhases(p.iv), idx: 0, left: 300, end: 0, running: false, done: false };
   return IT;
 }
 function drawITimer(){
@@ -1875,7 +1889,9 @@ function nextPhase(t, sound){
 }
 setInterval(() => {
   if (REST) { if (Date.now() >= REST.end) { REST = null; beep(2); } drawRest(); }
-  if (IT && IT.running) { if (Date.now() >= IT.end) nextPhase(IT, true); if (document.getElementById("itimer")) drawITimer(); }
+  if (IT && IT.running) { const sl = Math.ceil((IT.end - Date.now()) / 1000);
+    if (sl >= 1 && sl <= 3 && IT.tick !== IT.idx + ":" + sl) { IT.tick = IT.idx + ":" + sl; tick(); }
+    if (Date.now() >= IT.end) nextPhase(IT, true); if (document.getElementById("itimer")) drawITimer(); }
 }, 250);
 
 /* ---------- events ---------- */
